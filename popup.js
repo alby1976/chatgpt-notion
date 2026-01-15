@@ -102,6 +102,11 @@ sendBtn.addEventListener("click", async () => {
     setStatus("❌ No active tab found.");
     return;
   }
+  if (!tab.url?.startsWith("https://chatgpt.com/")) {
+    setStatus("❌ Open a ChatGPT conversation tab first.");
+    return;
+  }
+
 
   // Helper: send message to content script
   const collectChat = () =>
@@ -141,7 +146,8 @@ sendBtn.addEventListener("click", async () => {
     // This text is the usual indicator that there is no listener
     const looksLikeNoReceiver =
       msg.includes("Receiving end does not exist") ||
-      msg.includes("Could not establish connection");
+      msg.includes("Could not establish connection") ||
+      msg.includes("No receiving end");
 
     if (!looksLikeNoReceiver) {
       setStatus("❌ Could not read the page.\n" + msg);
@@ -182,7 +188,7 @@ sendBtn.addEventListener("click", async () => {
       // summary + message model (for append-new-messages)
       summary: (response.full_text || "").slice(0, 800),
       message_count: response.message_count || 0,
-      last_message_index: response.last_message_index || 0,
+      last_message_index: response.last_message_index ?? 0,
       messages: response.messages || [],
 
       // optional full text (handy for debugging / fallback)
