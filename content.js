@@ -1,6 +1,8 @@
 function clean(text) {
   return (text || "")
-    .replace(/\s+\n/g, "\n")
+    .replace(/\u200B/g, "")        // zero-width space
+    .replace(/\r\n/g, "\n")        // normalize Windows newlines
+    .replace(/[ \t]+\n/g, "\n")    // trim trailing spaces before newline (safer)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -66,7 +68,13 @@ function extractMessages() {
   if (roleNodes.length) {
     roleNodes.forEach((node, idx) => {
       const role = node.getAttribute("data-message-author-role") || "unknown";
-      const text = clean(node.innerText);
+      const content =
+        node.querySelector(".markdown") ||
+        node.querySelector('[data-testid="message-text"]') ||
+        node;
+
+      const text = clean(content.innerText);
+      if (text.includes("Regenerate") && text.includes("Copy")) return;
       if (text) {
         messages.push({
           index: idx,
@@ -75,12 +83,21 @@ function extractMessages() {
         });
       }
     });
+    if (messages.length < 2) {
+      const turns = main.querySelectorAll('[data-testid="conversation-turn"]');
+      turns.forEach((turn, idx) => {
+        const text = clean(turn.innerText);
+        if (text.includes("Regenerate") && text.includes("Copy")) return;
+        if (text) messages.push({ index: idx, role: "unknown", text });
+      });
+    }
   } else {
     // Fallback: try article blocks
     const articles = Array.from(main.querySelectorAll("article"));
     let idx = 0;
     for (const a of articles) {
       const text = clean(a.innerText);
+      if (text.includes("Regenerate") && text.includes("Copy")) continue ;
       if (!text) continue;
       messages.push({ index: idx++, role: "unknown", text });
     }
@@ -119,7 +136,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       chat_url: getChatUrl(),
       share_url: getShareUrl(),
       message_count: messages.length,
-      last_message_index: messages.length ? messages[messages.length - 1].index : 0,
+      last_message_index: messages.length ? (messages.length - 1) : 0,
       messages,
       full_text
     };
