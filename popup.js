@@ -103,55 +103,106 @@ sendBtn.addEventListener("click", async () => {
     return;
   }
 
-  chrome.tabs.sendMessage(tab.id, { type: "COLLECT_CHAT_V2" }, async (response) => {
-    if (chrome.runtime.lastError) {
-      setStatus("❌ Could not read the page.\n" + chrome.runtime.lastError.message);
-      return;
-    }
-    if (!response?.ok) {
-      setStatus("❌ Failed to collect chat.\n" + (response?.error || ""));
+  // Helper: send message to content script
+  const collectChat = () =>
+    new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(tab.id, { type: "COLLECT_CHAT_V2" }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(response);
+      });
+    });
+
+  // Helper: inject content script into current tab (if needed)
+  const injectContentScript = () =>
+    new Promise((resolve, reject) => {
+      chrome.scripting.executeScript(
+        { target: { tabId: tab.id }, files: ["content.js"] },
+        () => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve();
+        }
+      );
+    });
+
+  let response;
+  try {
+    // First try (fast path)
+    response = await collectChat();
+  } catch (err) {
+    // If content script isn't present, inject then retry
+    const msg = String(err?.message || err);
+
+    // This text is the usual indicator that there is no listener
+    const looksLikeNoReceiver =
+      msg.includes("Receiving end does not exist") ||
+      msg.includes("Could not establish connection");
+
+    if (!looksLikeNoReceiver) {
+      setStatus("❌ Could not read the page.\n" + msg);
       return;
     }
 
-    setStatus("Sending to Make…");
+    setStatus("Content script missing — injecting…");
 
     try {
-      const payload = {
-        ping: false,
-        source: "ChatGPT",
-        sent_at: new Date().toISOString(),
-
-        // identity + routing
-        title: response.title || "ChatGPT Conversation",
-        project: response.project || "General",
-        chat_url: response.chat_url || "",
-        share_url: response.share_url || "",
-
-        // summary + message model (for append-new-messages)
-        summary: (response.full_text || "").slice(0, 800),
-        message_count: response.message_count || 0,
-        last_message_index: response.last_message_index || 0,
-        messages: response.messages || [],
-
-        // optional full text (handy for debugging / fallback)
-        conversation_text: response.full_text || ""
-      };
-
-      const r = await fetch(webhook, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (!r.ok) {
-        const t = await r.text().catch(() => "");
-        setStatus(`❌ Make webhook error: ${r.status}\n${t}`);
-        return;
-      }
-
-      setStatus("✅ Sent! Make should update Notion + append NEW messages only.");
-    } catch (e) {
-      setStatus("❌ Network error:\n" + String(e));
+      await injectContentScript();
+      // Retry after injection
+      response = await collectChat();
+    } catch (err2) {
+      setStatus("❌ Could not inject/read the page.\n" + String(err2?.message || err2));
+      return;
     }
-  });
+  }
+
+  if (!response?.ok) {
+    setStatus("❌ Failed to collect chat.\n" + (response?.error || ""));
+    return;
+  }
+
+  setStatus("Sending to Make…");
+
+  try {
+    const payload = {
+      ping: false,
+      source: "ChatGPT",
+      sent_at: new Date().toISOString(),
+
+      // identity + routing
+      title: response.title || "ChatGPT Conversation",
+      project: response.project || "General",
+      chat_url: response.chat_url || "",
+      share_url: response.share_url || "",
+
+      // summary + message model (for append-new-messages)
+      summary: (response.full_text || "").slice(0, 800),
+      message_count: response.message_count || 0,
+      last_message_index: response.last_message_index || 0,
+      messages: response.messages || [],
+
+      // optional full text (handy for debugging / fallback)
+      conversation_text: response.full_text || ""
+    };
+
+    const r = await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      setStatus(`❌ Make webhook error: ${r.status}\n${t}`);
+      return;
+    }
+
+    setStatus("✅ Sent! Make should update Notion + append NEW messages only.");
+  } catch (e) {
+    setStatus("❌ Network error:\n" + String(e));
+  }
 });
