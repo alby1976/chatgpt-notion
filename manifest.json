@@ -1,5 +1,5 @@
 {
-  "manifest_version": 1,
+  "manifest_version": 3,
   "name": "ChatGPT → Make → Notion",
   "version": "1.0.0",
   "description": "Sends ChatGPT conversation to Make.com; ping logs; Notion dedupe + append new messages.",
