@@ -7,6 +7,22 @@ const testBtn = document.getElementById("test");
 const sendBtn = document.getElementById("send");
 const statusEl = document.getElementById("status");
 
+function clean(text) {
+  return (text || "")
+    .replace(/\u200B/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function simpleFingerprint(s) {
+  // light-weight hash (not crypto, but stable)
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return String(h >>> 0); // unsigned
+}
+
 function setStatus(msg) {
   statusEl.textContent = msg;
 }
@@ -174,11 +190,27 @@ sendBtn.addEventListener("click", async () => {
   setStatus("Sending to Make…");
 
   try {
+    // Build a stable fingerprint so Make/Notion can dedupe + merge records
+	const firstTurns = (response.messages || [])
+      .slice(0, 6) // first 6 turns (stable identity)
+      .map(m => `${m.role}:${clean(m.text)}`)
+      .join("\n");
+	if (!firstTurns) {
+	  setStatus("❌ Conversation not fully loaded yet. Scroll a bit and try again.");
+	  return;
+	}
+  
+    const base =
+	  clean(response.project || "") + "\n" +
+	  clean(response.title || "") + "\n" +
+	  firstTurns;
+    const fingerprint = simpleFingerprint(clean(base));	
     const payload = {
       ping: false,
+	  fingerprint, 
       source: "ChatGPT",
       sent_at: new Date().toISOString(),
-
+      
       // identity + routing
       title: response.title || "ChatGPT Conversation",
       project: response.project || "General",
