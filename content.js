@@ -66,40 +66,33 @@ function extractMessages() {
   const messages = [];
 
   if (roleNodes.length) {
-    roleNodes.forEach((node, idx) => {
-      const role = node.getAttribute("data-message-author-role") || "unknown";
-      const content =
-        node.querySelector(".markdown") ||
-        node.querySelector('[data-testid="message-text"]') ||
-        node;
+    let index = 0;
 
-      const text = clean(content.innerText);
-      if (text.includes("Regenerate") && text.includes("Copy")) return;
-      if (text) {
-        messages.push({
-          index: idx,
-          role,
-          text
-        });
-      }
-    });
-    if (messages.length < 2) {
-      const turns = main.querySelectorAll('[data-testid="conversation-turn"]');
-      turns.forEach((turn, idx) => {
-        const text = clean(turn.innerText);
-        if (text.includes("Regenerate") && text.includes("Copy")) return;
-        if (text) messages.push({ index: idx, role: "unknown", text });
+    roleNodes.forEach((node) => {
+      const role = node.getAttribute("data-message-author-role") || "unknown";
+      const text = clean(node.innerText);
+      if (!text) return;
+
+      messages.push({
+        index: index++,     // ✅ explicit, guaranteed
+        role,
+        text
       });
-    }
+    });
   } else {
-    // Fallback: try article blocks
+    // fallback (older / changed UI)
     const articles = Array.from(main.querySelectorAll("article"));
-    let idx = 0;
+    let index = 0;
+
     for (const a of articles) {
       const text = clean(a.innerText);
-      if (text.includes("Regenerate") && text.includes("Copy")) continue ;
       if (!text) continue;
-      messages.push({ index: idx++, role: "unknown", text });
+
+      messages.push({
+        index: index++,     // ✅ explicit, guaranteed
+        role: "unknown",
+        text
+      });
     }
   }
 
