@@ -1,3 +1,47 @@
+function chunkText(text, maxChars = 1800) {
+  const s = clean(text);
+  if (!s) return [];
+
+  // Prefer splitting on paragraph breaks first
+  const paras = s.split(/\n\s*\n/);
+
+  const chunks = [];
+  let buf = "";
+
+  const pushBuf = () => {
+    const t = buf.trim();
+    if (t) chunks.push(t);
+    buf = "";
+  };
+
+  for (const p of paras) {
+    const para = p.trim();
+    if (!para) continue;
+
+    // If a single paragraph is too big, split it hard
+    if (para.length > maxChars) {
+      pushBuf();
+      for (let i = 0; i < para.length; i += maxChars) {
+        chunks.push(para.slice(i, i + maxChars));
+      }
+      continue;
+    }
+
+    // Try to pack paragraphs into maxChars
+    if (!buf) {
+      buf = para;
+    } else if ((buf.length + 2 + para.length) <= maxChars) {
+      buf += "\n\n" + para;
+    } else {
+      pushBuf();
+      buf = para;
+    }
+  }
+
+  pushBuf();
+  return chunks;
+}
+
 function clean(text) {
   return (text || "")
     .replace(/\u200B/g, "")        // zero-width space
@@ -63,40 +107,58 @@ function extractMessages() {
   const main = document.querySelector("main") || document.body;
 
   const roleNodes = main.querySelectorAll("[data-message-author-role]");
-  const messages = [];
+  const raw_messages = [];
 
   if (roleNodes.length) {
-    let index = 0;
-
+    let msgIndex = 0;
     roleNodes.forEach((node) => {
       const role = node.getAttribute("data-message-author-role") || "unknown";
       const text = clean(node.innerText);
       if (!text) return;
 
-      messages.push({
-        index: index++,     // ✅ explicit, guaranteed
+      raw_messages.push({
+        msg_index: msgIndex++,
         role,
         text
       });
     });
   } else {
-    // fallback (older / changed UI)
+    // fallback if roleNodes not present
     const articles = Array.from(main.querySelectorAll("article"));
-    let index = 0;
+    let msgIndex = 0;
 
     for (const a of articles) {
       const text = clean(a.innerText);
       if (!text) continue;
 
-      messages.push({
-        index: index++,     // ✅ explicit, guaranteed
+      raw_messages.push({
+        msg_index: msgIndex++,
         role: "unknown",
         text
       });
     }
   }
 
-  return messages;
+  // Expand to chunked messages for Notion-safe append
+  const messages = [];
+  for (const m of raw_messages) {
+    const chunks = chunkText(m.text, 1800); // tweak 1500–2000 if you want
+    const chunkCount = Math.max(1, chunks.length);
+
+    if (!chunks.length) continue;
+
+    chunks.forEach((chunkText, chunkIndex) => {
+      messages.push({
+        msg_index: m.msg_index,           // ✅ stable index for append-new-messages logic
+        chunk_index: chunkIndex,          // ✅ ordering within a message
+        chunk_count: chunkCount,          // ✅ optional formatting
+        role: m.role,
+        text: chunkText
+      });
+    });
+  }
+
+  return { raw_messages, messages };
 }
 
 function buildFullText(messages) {
@@ -111,8 +173,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "COLLECT_CHAT_V2") return;
 
   try {
-    const messages = extractMessages();
-    const full_text = buildFullText(messages);
+    const {raw_messages, messages} = extractMessages();
+    const full_text = buildFullText(raw_messages.map(m => ({
+      index: m.msg_index,
+      role: m.role,
+      text: m.text
+    })));
 
     if (!full_text) {
       sendResponse({
@@ -128,8 +194,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       project: detectProjectName(),
       chat_url: getChatUrl(),
       share_url: getShareUrl(),
-      message_count: messages.length,
-      last_message_index: messages.length ? (messages.length - 1) : 0,
+      message_count: raw_messages.length,
+      last_message_index: raw_messages.length ? (raw_messages.length - 1) : 0,
+      block_count: messages.length, // total chunk blocks to append
       messages,
       full_text
     };
